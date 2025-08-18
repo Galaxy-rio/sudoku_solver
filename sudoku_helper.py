@@ -1,100 +1,88 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+交互式数独辅助解题器
 
-from collections import defaultdict, deque
-from typing import List, Set, Tuple, Dict, Optional
+输入：9 行，每行 9 个字符（0-9），0 表示空位，无分隔符
+交互：
+  n → 执行并展示下一步提示
+  r → 重新输入棋盘
+  e → 退出
+
+每一步都会以 3×3 小九宫形式打印每格候选（已填数字显示在中心）。
+"""
+
+from collections import defaultdict
+from itertools import combinations
+from typing import List, Set, Tuple, Optional, Dict
 
 Grid = List[List[int]]
 Pos = Tuple[int, int]
 
-# ------------------------------
-# 读入与基础设施
-# ------------------------------
+
+# ===================== 输入与基础结构 =====================
 
 def read_board() -> Grid:
-    """
-    读取 9 行、每行 9 个字符（0-9），无分隔符；0 表示空格。
-    """
-    print("请输入数独（9行，每行9个数字，0表示空）：")
+    print("请输入数独棋盘（9行，每行9个数字，0表示空）：")
     board: Grid = []
     for r in range(9):
         line = input().strip()
         if len(line) != 9 or any(ch not in "0123456789" for ch in line):
-            raise ValueError(f"第 {r+1} 行格式错误：应为9个字符，仅包含0-9。")
+            raise ValueError(f"第 {r + 1} 行格式错误：应为9个字符，仅包含0-9。")
         board.append([int(ch) for ch in line])
     return board
 
-def peers_and_units():
-    """预计算每个格子的同伴（同行/列/宫）以及所有单位（27个unit）"""
-    units = []  # 每个unit是一组坐标
+
+def rc(r: int, c: int) -> str:
+    return f"R{r + 1}C{c + 1}"
+
+
+def unit_iter():
+    """遍历全部 27 个单位（9 行、9 列、9 宫），返回 (kind, idx, cells)"""
     # 行
     for r in range(9):
-        units.append([(r, c) for c in range(9)])
+        yield "row", r, [(r, c) for c in range(9)]
     # 列
     for c in range(9):
-        units.append([(r, c) for r in range(9)])
+        yield "col", c, [(r, c) for r in range(9)]
     # 宫
+    k = 0
     for br in range(0, 9, 3):
         for bc in range(0, 9, 3):
-            units.append([(br + i, bc + j) for i in range(3) for j in range(3)])
+            cells = [(br + i, bc + j) for i in range(3) for j in range(3)]
+            yield "box", k, cells
+            k += 1
 
-    unit_of_cell: List[List[List[int]]] = [[[] for _ in range(9)] for _ in range(9)]
-    for uid, unit in enumerate(units):
-        for (r, c) in unit:
-            unit_of_cell[r][c].append(uid)
 
-    peers: List[List[Set[Pos]]] = [[set() for _ in range(9)] for _ in range(9)]
-    for r in range(9):
-        for c in range(9):
-            ps = set()
-            for uid in unit_of_cell[r][c]:
-                for rc in units[uid]:
-                    if rc != (r, c):
-                        ps.add(rc)
-            peers[r][c] = ps
+# ===================== 候选与打印 =====================
 
-    return units, unit_of_cell, peers
-
-UNITS, UNIT_OF_CELL, PEERS = peers_and_units()
-
-def rc_label(r: int, c: int) -> str:
-    return f"R{r+1}C{c+1}"
-
-# ------------------------------
-# 候选生成与打印
-# ------------------------------
-
-def compute_base_candidates(board: Grid) -> List[List[Set[int]]]:
-    """
-    从当前盘面生成基础候选（不含手动消除）。
-    已填格的候选为 {v}。
-    """
-    cand = [[set(range(1, 10)) for _ in range(9)] for _ in range(9)]
-    for r in range(9):
-        for c in range(9):
-            v = board[r][c]
-            if v != 0:
-                cand[r][c] = {v}
-            else:
-                used = set()
-                # 行
-                used |= set(board[r][i] for i in range(9))
-                # 列
-                used |= set(board[i][c] for i in range(9))
-                # 宫
-                br, bc = (r // 3) * 3, (c // 3) * 3
-                used |= set(board[br + i][bc + j] for i in range(3) for j in range(3))
-                used.discard(0)
-                cand[r][c] -= used
+def init_candidates(board: Grid) -> List[List[Set[int]]]:
+    """初始化候选；随后调用 update_candidates 以传播已填数字的影响。"""
+    cand = [[(set(range(1, 10)) if board[r][c] == 0 else {board[r][c]}) for c in range(9)] for r in range(9)]
+    update_candidates(board, cand)
     return cand
 
-def apply_forbidden(cand: List[List[Set[int]]],
-                    forbidden: List[List[Set[int]]]) -> None:
-    """将手动消除过的候选（forbidden）应用到当前候选上。"""
+
+def update_candidates(board: Grid, cand: List[List[Set[int]]]) -> None:
+    """根据当前已填数字收缩候选（只做剪除，不重新放回被消去的候选）。"""
     for r in range(9):
         for c in range(9):
-            if forbidden[r][c]:
-                cand[r][c] -= forbidden[r][c]
+            if board[r][c] != 0:
+                val = board[r][c]
+                cand[r][c] = {val}
+                # 同行/同列/同宫删掉 val
+                for cc in range(9):
+                    if cc != c:
+                        cand[r][cc].discard(val)
+                for rr in range(9):
+                    if rr != r:
+                        cand[rr][c].discard(val)
+                br, bc = (r // 3) * 3, (c // 3) * 3
+                for rr in range(br, br + 3):
+                    for cc in range(bc, bc + 3):
+                        if rr != r or cc != c:
+                            cand[rr][cc].discard(val)
+
 
 def pretty_print_candidates(board: Grid, cand: List[List[Set[int]]]) -> None:
     """
@@ -136,286 +124,232 @@ def pretty_print_candidates(board: Grid, cand: List[List[Set[int]]]) -> None:
 
     print("\n".join(lines))
 
-# ------------------------------
-# 提示类型 1：Naked Single
-# ------------------------------
 
-def find_naked_single(board: Grid, cand: List[List[Set[int]]]) -> Optional[Tuple[str, Pos, int]]:
+# ===================== 操作应用 =====================
+
+def place(board: Grid, cand: List[List[Set[int]]], r: int, c: int, v: int) -> None:
+    """填入一个确定数字，并传播候选剪除。"""
+    board[r][c] = v
+    update_candidates(board, cand)
+
+
+def eliminate(cand: List[List[Set[int]]], targets: List[Tuple[int, int, Set[int]]]) -> None:
+    """在若干格子中消除若干候选数（不改变 board）。targets: [(r,c,{vs}), ...]"""
+    for r, c, vs in targets:
+        cand[r][c] -= vs
+
+
+# ===================== 技巧 1：Naked Single =====================
+
+def find_naked_single(board: Grid, cand: List[List[Set[int]]]) -> Optional[
+    Tuple[str, Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]]]:
     for r in range(9):
         for c in range(9):
             if board[r][c] == 0 and len(cand[r][c]) == 1:
-                val = next(iter(cand[r][c]))
-                text = f"[Naked Single] {rc_label(r,c)} 只能是 {val}。"
-                return text, (r, c), val
+                v = next(iter(cand[r][c]))
+                text = f"[Naked Single] {rc(r, c)} 只能是 {v}。"
+                return text, ("fill", str(r), str(c), str(v)), (), ()
     return None
 
-# ------------------------------
-# 提示类型 2：Hidden Single
-# ------------------------------
 
-def find_hidden_single(board: Grid, cand: List[List[Set[int]]]) -> Optional[Tuple[str, Pos, int]]:
-    # 行 / 列 / 宫
-    for uid, unit in enumerate(UNITS):
-        count: Dict[int, List[Pos]] = {n: [] for n in range(1, 10)}
-        for (r, c) in unit:
+# ===================== 技巧 2：Hidden Single =====================
+
+def find_hidden_single(board: Grid, cand: List[List[Set[int]]]) -> Optional[
+    Tuple[str, Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]]]:
+    for kind, idx, cells in unit_iter():
+        occ: Dict[int, List[Pos]] = {v: [] for v in range(1, 10)}
+        for (r, c) in cells:
             if board[r][c] == 0:
-                for n in cand[r][c]:
-                    count[n].append((r, c))
-        for n, locs in count.items():
+                for v in cand[r][c]:
+                    occ[v].append((r, c))
+        for v, locs in occ.items():
             if len(locs) == 1:
                 r, c = locs[0]
-                kind = "行" if uid < 9 else ("列" if uid < 18 else "宫")
-                scope = uid if uid < 9 else (uid - 9 if uid < 18 else uid - 18)
-                if kind == "宫":
-                    block_label = f"{(scope//3)+1}-{(scope%3)+1}"
-                    text = f"[Hidden Single] 数字 {n} 在第{kind}{block_label} 内仅能放在 {rc_label(r,c)} → 填入 {n}。"
-                elif kind == "行":
-                    text = f"[Hidden Single] 数字 {n} 在第{kind}{scope+1} 内仅能放在 {rc_label(r,c)} → 填入 {n}。"
-                else:
-                    text = f"[Hidden Single] 数字 {n} 在第{kind}{scope+1} 内仅能放在 {rc_label(r,c)} → 填入 {n}。"
-                return text, (r, c), n
+                label = {"row": f"第{idx + 1}行", "col": f"第{idx + 1}列", "box": f"第{idx // 3 + 1}-{idx % 3 + 1}宫"}[
+                    kind]
+                text = f"[Hidden Single] 数字 {v} 在{label}仅能放在 {rc(r, c)} → 填入 {v}。"
+                return text, ("fill", str(r), str(c), str(v)), (), ()
     return None
 
-# ------------------------------
-# 提示类型 3：Simple Coloring（强链着色消除）
-# ------------------------------
 
-def build_strong_link_graph_for_digit(cand: List[List[Set[int]]], d: int) -> Dict[Pos, Set[Pos]]:
-    """
-    针对某个数字 d，构建强链图：
-    在任一 行/列/宫 中，若 d 只出现于 2 个格子，则这两个格子间存在一条强链边。
-    """
-    G: Dict[Pos, Set[Pos]] = defaultdict(set)
+# ===================== 技巧 3：Locked Candidate（宫→行/列消除） =====================
 
-    # 行
-    for r in range(9):
-        locs = [(r, c) for c in range(9) if d in cand[r][c]]
-        if len(locs) == 2:
-            a, b = locs
-            G[a].add(b); G[b].add(a)
-
-    # 列
-    for c in range(9):
-        locs = [(r, c) for r in range(9) if d in cand[r][c]]
-        if len(locs) == 2:
-            a, b = locs
-            G[a].add(b); G[b].add(a)
-
-    # 宫
+def find_locked_candidate(board: Grid, cand: List[List[Set[int]]]) -> Optional[
+    Tuple[str, Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]]]:
     for br in range(0, 9, 3):
         for bc in range(0, 9, 3):
-            locs = [(br+i, bc+j) for i in range(3) for j in range(3) if d in cand[br+i][bc+j]]
-            if len(locs) == 2:
-                a, b = locs
-                G[a].add(b); G[b].add(a)
-
-    return G
-
-def two_color_components(G: Dict[Pos, Set[Pos]]) -> Dict[Pos, int]:
-    """
-    二色着色：同一连通分量用颜色 0/1。
-    返回每个节点的颜色；无法二分（奇环）时可忽略（实战中一般也可二分）。
-    """
-    color: Dict[Pos, int] = {}
-    for start in G.keys():
-        if start in color:
-            continue
-        color[start] = 0
-        q = deque([start])
-        while q:
-            u = q.popleft()
-            for v in G[u]:
-                if v not in color:
-                    color[v] = 1 - color[u]
-                    q.append(v)
-                # 若出现冲突（同色相邻），这里不特殊处理
-    return color
-
-def find_simple_coloring_elimination(board: Grid,
-                                     cand: List[List[Set[int]]]) -> Optional[Tuple[str, Pos, int, List[Pos]]]:
-    """
-    返回一条可执行的“消除候选”的提示：
-    (描述文本, 目标格子, 被消除的数字d, 一条链路径（强链边序列上的节点列表，便于解释）)
-    """
-    # 对每个数字尝试
-    for d in range(1, 10):
-        # 构建强链图（仅由 d 的候选组成）
-        G = build_strong_link_graph_for_digit(cand, d)
-        if not G:
-            continue
-        color = two_color_components(G)
-        if not color:
-            continue
-
-        # 收集每个连通分量节点
-        comp_members: Dict[Pos, int] = {}     # node -> comp_id
-        comp_nodes: List[List[Pos]] = []
-        visited = set()
-        for node in G.keys():
-            if node in visited:
-                continue
-            # BFS 获取分量
-            comp_id = len(comp_nodes)
-            comp_nodes.append([])
-            q = deque([node])
-            visited.add(node)
-            while q:
-                u = q.popleft()
-                comp_nodes[comp_id].append(u)
-                comp_members[u] = comp_id
-                for v in G[u]:
-                    if v not in visited:
-                        visited.add(v)
-                        q.append(v)
-
-        # 对每个分量，找“看到两种颜色”的外部格子进行消除
-        for comp in comp_nodes:
-            # 该分量中两种颜色的节点集合
-            color_groups = {0: set(), 1: set()}
-            for u in comp:
-                color_groups[color[u]].add(u)
-
-            # 所有含 d 的格子（包括分量外部）
-            all_d_cells = [(r, c) for r in range(9) for c in range(9)
-                           if board[r][c] == 0 and d in cand[r][c]]
-
-            # 尝试找到一个目标格子 t：它同时是颜色0集与颜色1集的“可见格”的交集
-            for t in all_d_cells:
-                if t in comp:
-                    continue  # 本分量中的节点不作为外部消除目标（也可做，但解释更复杂）
-                sees0 = any(u in PEERS[t[0]][t[1]] for u in color_groups[0])
-                sees1 = any(u in PEERS[t[0]][t[1]] for u in color_groups[1])
-                if sees0 and sees1:
-                    # 找一条链用于解释：从一个 0 色节点到一个 1 色节点的路径
-                    path = find_any_path_across_colors(G, color_groups[0], color_groups[1])
-                    # 生成说明文字
-                    text = (
-                        f"[Simple Coloring 强链着色] 针对数字 {d}：在若干行/列/宫中，{d} 只出现于两个位置构成强链。"
-                        f"将该强链所在分量二色着色（A/B）。由于 {rc_label(*t)} 同时能看到两种颜色的 {d}，"
-                        f"因此可在 {rc_label(*t)} 中**消除 {d}**。"
-                    )
-                    return text, t, d, path
+            cells = [(br + i, bc + j) for i in range(3) for j in range(3)]
+            for v in range(1, 10):
+                pos = [(r, c) for (r, c) in cells if board[r][c] == 0 and v in cand[r][c]]
+                if len(pos) < 2:
+                    continue
+                rows = {r for r, _ in pos}
+                cols = {c for _, c in pos}
+                # 宫内全部落在同一行 → 该行宫外消除
+                if len(rows) == 1:
+                    r = next(iter(rows))
+                    elim_targets = []
+                    for c in range(9):
+                        if not (bc <= c < bc + 3):
+                            if board[r][c] == 0 and v in cand[r][c]:
+                                elim_targets.append((r, c, {v}))
+                    if elim_targets:
+                        text = f"[Locked Candidate] 数字 {v} 在宫 {(br // 3) + 1}-{(bc // 3) + 1} 只位于行 {r + 1}，故该行宫外位置不可为 {v}。"
+                        return text, (), ("elim",), tuple(f"{t[0]},{t[1]},{v}" for t in elim_targets)
+                # 宫内全部落在同一列 → 该列宫外消除
+                if len(cols) == 1:
+                    c = next(iter(cols))
+                    elim_targets = []
+                    for r in range(9):
+                        if not (br <= r < br + 3):
+                            if board[r][c] == 0 and v in cand[r][c]:
+                                elim_targets.append((r, c, {v}))
+                    if elim_targets:
+                        text = f"[Locked Candidate] 数字 {v} 在宫 {(br // 3) + 1}-{(bc // 3) + 1} 只位于列 {c + 1}，故该列宫外位置不可为 {v}。"
+                        return text, (), ("elim",), tuple(f"{t[0]},{t[1]},{v}" for t in elim_targets)
     return None
 
-def find_any_path_across_colors(G: Dict[Pos, Set[Pos]], groupA: Set[Pos], groupB: Set[Pos]) -> List[Pos]:
-    """
-    在强链图中找一条从 A 组任一点到 B 组任一点的路径，用于解释“链”。
-    如果找不到，返回空列表。
-    """
-    if not groupA or not groupB:
-        return []
-    starts = list(groupA)
-    goals = set(groupB)
 
-    for s in starts:
-        prev: Dict[Pos, Optional[Pos]] = {s: None}
-        q = deque([s])
-        while q:
-            u = q.popleft()
-            if u in goals:
-                # 回溯路径
-                path = []
-                cur = u
-                while cur is not None:
-                    path.append(cur)
-                    cur = prev[cur]
-                path.reverse()
-                return path
-            for v in G[u]:
-                if v not in prev:
-                    prev[v] = u
-                    q.append(v)
-    return []
+# ===================== 技巧 4~6：Hidden Pair/Triple/Quad =====================
 
-# ------------------------------
-# 应用操作
-# ------------------------------
+def _find_hidden_set(board: Grid, cand: List[List[Set[int]]], size: int) -> Optional[
+    Tuple[str, Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]]]:
+    label_map = {"row": "行", "col": "列", "box": "宫"}
+    for kind, idx, cells in unit_iter():
+        # 统计每个数字出现位置
+        occ: Dict[int, List[Pos]] = defaultdict(list)
+        empties = [p for p in cells if board[p[0]][p[1]] == 0]
+        for (r, c) in empties:
+            for v in cand[r][c]:
+                occ[v].append((r, c))
+        digits = [d for d in range(1, 10) if 1 <= len(occ[d]) <= size]
+        # 枚举 size 个数字的组合
+        for d_set in combinations(digits, size):
+            locs = set()
+            for d in d_set:
+                locs.update(occ[d])
+            if len(locs) != size:
+                continue  # 隐性集合的必要条件：这些数字仅覆盖 size 个格
+            # 这些格中删去非 d_set 的其它候选
+            elim_targets: List[Tuple[int, int, Set[int]]] = []
+            changed = False
+            for (r, c) in locs:
+                others = cand[r][c] - set(d_set)
+                if others:
+                    elim_targets.append((r, c, others))
+                    changed = True
+            if changed:
+                name = {2: "Hidden Pair", 3: "Hidden Triple", 4: "Hidden Quad"}[size]
+                # 文字描述
+                if kind == "box":
+                    scope = f"第{idx // 3 + 1}-{idx % 3 + 1}{label_map[kind]}"
+                else:
+                    scope = f"第{idx + 1}{label_map[kind]}"
+                d_txt = ",".join(map(str, d_set))
+                loc_txt = ", ".join(rc(r, c) for (r, c) in sorted(locs))
+                text = f"[{name}] 在{scope}中，数字 {{{d_txt}}} 仅出现于 {size} 个格：{loc_txt}，因此这些格只能保留 {{{d_txt}}}，其余候选可删。"
+                # 将所有消除目标编码为字符串，主循环里一次性应用
+                return (text, (), ("elim",),
+                        tuple(f"{r},{c}," + ";".join(map(str, sorted(vs))) for (r, c, vs) in elim_targets))
+    return None
 
-def apply_fill(board: Grid, r: int, c: int, v: int) -> None:
-    board[r][c] = v
 
-def apply_eliminate(forbidden: List[List[Set[int]]], r: int, c: int, d: int) -> None:
-    forbidden[r][c].add(d)
+def find_hidden_pair(board: Grid, cand: List[List[Set[int]]]):
+    return _find_hidden_set(board, cand, 2)
 
-# ------------------------------
-# 主交互循环
-# ------------------------------
+
+def find_hidden_triple(board: Grid, cand: List[List[Set[int]]]):
+    return _find_hidden_set(board, cand, 3)
+
+
+def find_hidden_quad(board: Grid, cand: List[List[Set[int]]]):
+    return _find_hidden_set(board, cand, 4)
+
+
+# ===================== 主交互循环 =====================
 
 def main():
-    # 初始读取
     try:
         board = read_board()
     except Exception as e:
         print("输入错误：", e)
         return
 
-    # 记录“基于链/逻辑的手动消除”
-    forbidden = [[set() for _ in range(9)] for _ in range(9)]
+    cand = init_candidates(board)
 
     while True:
-        # 计算候选并应用手动消除
-        cand = compute_base_candidates(board)
-        apply_forbidden(cand, forbidden)
-
-        # 打印当前候选棋盘
-        print("\n当前候选棋盘（每格 3×3，中心为已填数字）：\n")
+        print("当前候选棋盘（中心为已填数字）：")
         pretty_print_candidates(board, cand)
 
-        # 依次寻找下一条“人类逻辑提示”
+        # 查找下一步提示（按优先级）
         hint = (
-            find_naked_single(board, cand) or
-            find_hidden_single(board, cand) or
-            None
+                find_naked_single(board, cand)
+                or find_hidden_single(board, cand)
+                or find_locked_candidate(board, cand)
+                or find_hidden_pair(board, cand)
+                or find_hidden_triple(board, cand)
+                or find_hidden_quad(board, cand)
         )
 
-        chain_hint = None
         if hint is None:
-            chain_hint = find_simple_coloring_elimination(board, cand)
-
-        if hint is not None:
-            text, (r, c), v = hint
-            print("\n提示：", text)
-            action = ("fill", (r, c, v))
-        elif chain_hint is not None:
-            text, target, d, path = chain_hint
-            print("\n提示：", text)
-            if path:
-                chain_str = " — ".join(rc_label(*p) for p in path)
-                print(f"链（强链边序列示意）：{chain_str}")
-            print(f"建议操作：从 {rc_label(*target)} 的候选中**消除 {d}**")
-            action = ("elim", (target[0], target[1], d))
-        else:
-            print("\n提示：未找到进一步的人类推理（需要更高级技巧或题目已近终局）。")
-            action = None
-
-        # 交互命令
-        cmd = input("\n请输入命令 [n=执行提示, r=重新输入, e=退出]: ").strip().lower()
-        if cmd == "n":
-            if action is None:
-                print("（当前没有可执行的提示。）")
+            print("提示：没有更多可用的人类逻辑（或需要更高级技巧）。")
+            cmd = input("请输入命令 [r=重新输入, e=退出, 其它=继续查看]: ").strip().lower()
+            if cmd == 'r':
+                try:
+                    board = read_board()
+                    cand = init_candidates(board)
+                    continue
+                except Exception as e:
+                    print("输入错误：", e)
+                    return
+            elif cmd == 'e':
+                print("已退出。")
+                return
             else:
-                if action[0] == "fill":
-                    r, c, v = action[1]
-                    apply_fill(board, r, c, v)
-                    # 填入后，该格不再需要“手动消除”记录
-                    forbidden[r][c].clear()
-                    print(f"已填入：{rc_label(r,c)} = {v}")
-                else:
-                    r, c, d = action[1]
-                    apply_eliminate(forbidden, r, c, d)
-                    print(f"已消除：{rc_label(r,c)} 中的候选 {d}")
-        elif cmd == "r":
+                continue
+
+        text, fill_action, elim_flag, elim_payload = hint
+        print("提示：", text)
+
+        cmd = input("请输入命令 [n=执行提示, r=重新输入, e=退出]: ").strip().lower()
+        if cmd == 'e':
+            print("已退出。")
+            return
+        elif cmd == 'r':
             try:
                 board = read_board()
-                forbidden = [[set() for _ in range(9)] for _ in range(9)]
+                cand = init_candidates(board)
             except Exception as e:
                 print("输入错误：", e)
                 return
-        elif cmd == "e":
-            print("已退出。")
-            return
+            continue
+        elif cmd == 'n':
+            # 执行动作
+            if fill_action:
+                _, sr, sc, sv = fill_action
+                r, c, v = int(sr), int(sc), int(sv)
+                place(board, cand, r, c, v)
+                print(f"已填入：{rc(r, c)} = {v}")
+            elif elim_flag:
+                # elim_payload 里可能有多条，格式："r,c,v1;v2;..."，或 Locked Candidate 的 "r,c,v"
+                targets: List[Tuple[int, int, Set[int]]] = []
+                for token in elim_payload:
+                    parts = token.split(',')
+                    r, c = int(parts[0]), int(parts[1])
+                    if len(parts) >= 3:
+                        vs = set(int(x) for x in parts[2].split(';'))
+                    else:
+                        vs = set()
+                    targets.append((r, c, vs))
+                eliminate(cand, targets)
+                # 应用一次剪除后，有可能产生新的 Naked/Hidden Single，下一轮会展示
+                info = ", ".join(f"{rc(r, c)}:-{sorted(vs)}" for r, c, vs in targets)
+                print(f"已消除候选：{info}")
+            else:
+                print("（无可执行动作）")
         else:
             print("无效输入，请输入 n / r / e。")
+
 
 if __name__ == "__main__":
     main()
