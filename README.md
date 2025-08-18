@@ -4,7 +4,7 @@ A step by step sudoku solver
 
 ## Techniques
 
-Supported techniques:
+### Supported techniques:
 - Hidden Single
 - Naked Single
 - Locked Candidate
@@ -12,7 +12,7 @@ Supported techniques:
 - Hidden Triple
 - Hidden Quad
 
-## Future Techniques
+### Future Techniques
 - Naked Pair
 - Naked Triple
 - Naked Quad
