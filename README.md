@@ -1,6 +1,6 @@
 # README
 
-A step by step sudoku solver
+A step by step sudoku solver.
 
 ## Techniques
 
