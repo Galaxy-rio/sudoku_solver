@@ -13,6 +13,7 @@
 """
 
 from collections import defaultdict
+from collections import deque
 from itertools import combinations
 from typing import List, Set, Tuple, Optional, Dict
 
@@ -172,7 +173,7 @@ def find_hidden_single(board: Grid, cand: List[List[Set[int]]]) -> Optional[
     return None
 
 
-# ===================== 技巧 3：Locked Candidate（宫→行/列消除） =====================
+# ===================== 技巧 3：Locked Candidate =====================
 
 def find_locked_candidate(board: Grid, cand: List[List[Set[int]]]) -> Optional[
     Tuple[str, Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]]]:
@@ -265,6 +266,311 @@ def find_hidden_triple(board: Grid, cand: List[List[Set[int]]]):
 def find_hidden_quad(board: Grid, cand: List[List[Set[int]]]):
     return _find_hidden_set(board, cand, 4)
 
+# ===================== 技巧 7~9：Naked Pair/Triple/Quad=====================
+from typing import Dict as _Dict, Tuple as _Tuple
+
+def _find_naked_set(board: Grid, cand: List[List[Set[int]]], size: int) -> Optional[
+    Tuple[str, Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]]
+]:
+    label_map = {"row": "行", "col": "列", "box": "宫"}
+    for kind, idx, cells in unit_iter():
+        empties = [(r, c) for (r, c) in cells if board[r][c] == 0]
+
+        # 将“候选恰好为 size 个”的格子按候选集合分组
+        pat: _Dict[_Tuple[int, ...], List[Pos]] = defaultdict(list)
+        for (r, c) in empties:
+            if len(cand[r][c]) == size:
+                key = tuple(sorted(cand[r][c]))
+                pat[key].append((r, c))
+
+        # 寻找恰好出现 size 个格子的候选集合（裸集合）
+        for digits_t, locs in pat.items():
+            if len(locs) != size:
+                continue
+            digits = set(digits_t)
+
+            # 从同一单位内“其它格子”里删除这些数字
+            elim_targets: List[Tuple[int, int, Set[int]]] = []
+            for (r, c) in empties:
+                if (r, c) in locs:
+                    continue
+                inter = cand[r][c] & digits
+                if inter:
+                    elim_targets.append((r, c, inter))
+
+            if elim_targets:
+                name = {2: "Naked Pair", 3: "Naked Triple", 4: "Naked Quad"}[size]
+                if kind == "box":
+                    scope = f"第{idx // 3 + 1}-{idx % 3 + 1}{label_map[kind]}"
+                else:
+                    scope = f"第{idx + 1}{label_map[kind]}"
+
+                d_txt = ",".join(map(str, digits_t))
+                loc_txt = ", ".join(rc(r, c) for (r, c) in sorted(locs))
+                text = (f"[{name}] 在{scope}中，{size} 个格 {loc_txt} 仅包含 {{{d_txt}}}。"
+                        f" 因此{scope}内其它格不可能取 {{{d_txt}}}，将其删除。")
+                return (text, (), ("elim",),
+                        tuple(f"{r},{c}," + ";".join(map(str, sorted(vs))) for (r, c, vs) in elim_targets))
+    return None
+
+def find_naked_pair(board: Grid, cand: List[List[Set[int]]]):
+    return _find_naked_set(board, cand, 2)
+
+def find_naked_triple(board: Grid, cand: List[List[Set[int]]]):
+    return _find_naked_set(board, cand, 3)
+
+def find_naked_quad(board: Grid, cand: List[List[Set[int]]]):
+    return _find_naked_set(board, cand, 4)
+
+
+# ===================== 技巧 10~12：Fish=====================
+
+def _fish(board: Grid, cand: List[List[Set[int]]], size: int, base: str) -> Optional[
+    Tuple[str, Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]]
+]:
+
+    name = {2: "X-Wing", 3: "Swordfish", 4: "Jellyfish"}[size]
+
+    for v in range(1, 10):
+        line_to_pos = {}
+        for i in range(9):
+            if base == 'row':
+                poss = [j for j in range(9) if board[i][j] == 0 and v in cand[i][j]]
+            else:
+                poss = [j for j in range(9) if board[j][i] == 0 and v in cand[j][i]]
+
+            cols_or_rows = sorted(set(poss))
+            # 典型定义要求每条线上的候选列数（或行数）恰好为 size
+            if len(cols_or_rows) == size:
+                line_to_pos[i] = cols_or_rows
+
+        if len(line_to_pos) < size:
+            continue
+
+        for lines in combinations(line_to_pos.keys(), size):
+            ref = set(line_to_pos[lines[0]])
+            if all(set(line_to_pos[i]) == ref for i in lines):
+                elim_targets: List[Tuple[int, int, Set[int]]] = []
+                if base == 'row':
+                    cols = sorted(ref)
+                    for r in range(9):
+                        if r in lines:
+                            continue
+                        for c in cols:
+                            if board[r][c] == 0 and v in cand[r][c]:
+                                elim_targets.append((r, c, {v}))
+                    lines_txt = ", ".join(str(r + 1) for r in sorted(lines))
+                    cols_txt = ", ".join(str(c + 1) for c in cols)
+                    text = (f"[{name}] 数字 {v} 在行 {lines_txt} 的列 {{{cols_txt}}} 上成型，"
+                            f"因此其它行这些列不能为 {v}。")
+                else:
+                    rows = sorted(ref)
+                    for c in range(9):
+                        if c in lines:
+                            continue
+                        for r in rows:
+                            if board[r][c] == 0 and v in cand[r][c]:
+                                elim_targets.append((r, c, {v}))
+                    lines_txt = ", ".join(str(c + 1) for c in sorted(lines))
+                    rows_txt = ", ".join(str(r + 1) for r in rows)
+                    text = (f"[{name}] 数字 {v} 在列 {lines_txt} 的行 {{{rows_txt}}} 上成型，"
+                            f"因此其它列这些行不能为 {v}。")
+
+                if elim_targets:
+                    return text, (), ("elim",), tuple(f"{r},{c},{v}" for (r, c, _) in elim_targets)
+    return None
+
+
+def find_x_wing(board: Grid, cand: List[List[Set[int]]]) -> Optional[
+    Tuple[str, Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]]]:
+    return _fish(board, cand, 2, 'row') or _fish(board, cand, 2, 'col')
+
+
+def find_swordfish(board: Grid, cand: List[List[Set[int]]]) -> Optional[
+    Tuple[str, Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]]]:
+    return _fish(board, cand, 3, 'row') or _fish(board, cand, 3, 'col')
+
+
+def find_jellyfish(board: Grid, cand: List[List[Set[int]]]) -> Optional[
+    Tuple[str, Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]]]:
+    return _fish(board, cand, 4, 'row') or _fish(board, cand, 4, 'col')
+
+
+# ===================== 技巧 13~15：Color Trap/Wrap/Wing =====================
+
+def _same_unit(a: Pos, b: Pos) -> bool:
+    """判断两格是否处在同一行/列/宫中（可相互“可见”）"""
+    (r1, c1), (r2, c2) = a, b
+    if r1 == r2 or c1 == c2:
+        return True
+    if (r1 // 3 == r2 // 3) and (c1 // 3 == c2 // 3):
+        return True
+    return False
+
+def _build_strong_link_graph(board: Grid, cand: List[List[Set[int]]], v: int):
+    """
+    对给定数字 v，建立“强链”图：
+      - 节点：所有含候选 v 的空格 (r,c)
+      - 边：在同一单位（行/列/宫）且该单位中候选 v 恰好出现 2 次，则这两个格之间存在强链（互斥的二选一）
+    返回：字典 graph: node -> set(neighbors)
+    """
+    nodes = [(r, c) for r in range(9) for c in range(9) if board[r][c] == 0 and v in cand[r][c]]
+    graph = {n: set() for n in nodes}
+
+    # 遍历单位（行/列/宫），若某单位中 v 的候选格恰为 2 个，则连边
+    for kind, idx, cells in unit_iter():
+        locs = [(r, c) for (r, c) in cells if board[r][c] == 0 and v in cand[r][c]]
+        if len(locs) == 2:
+            a, b = locs
+            graph.setdefault(a, set()).add(b)
+            graph.setdefault(b, set()).add(a)
+
+    return graph
+
+def _color_components(graph):
+    """
+    将图的每个连通分量进行二色染色（强链应该形成二分图）。
+    返回：list of components，每个 component 是 (nodes_set, color_map)
+      - nodes_set: set of nodes in该分量
+      - color_map: dict node->0/1
+    """
+    visited = set()
+    comps = []
+    for node in graph:
+        if node in visited:
+            continue
+        # BFS 染色
+        q = deque([node])
+        color = {node: 0}
+        comp_nodes = {node}
+        visited.add(node)
+        bipartite = True
+        while q:
+            u = q.popleft()
+            for w in graph[u]:
+                if w not in color:
+                    color[w] = 1 - color[u]
+                    q.append(w)
+                    comp_nodes.add(w)
+                    visited.add(w)
+                else:
+                    # 若已经有颜色且冲突（说明奇环），这里仍保留颜色分配（但注意可能不能用于某些断言）
+                    if color[w] == color[u]:
+                        # 记录为非二分图（不过我们仍继续）
+                        bipartite = False
+        comps.append((comp_nodes, color, bipartite))
+    return comps
+
+def find_color_trap(board: Grid, cand: List[List[Set[int]]]) -> Optional[
+    Tuple[str, Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]]]:
+    """
+    Color Trap:
+      - 对每个数字 v 建立强链图并染色，每个连通分量产生两个颜色（0/1）。
+      - 若在同一分量中发现 **同一颜色的两个节点互相可见（同行/同列/同宫）**，
+        则该颜色导致矛盾 → 该颜色为“假色”，可以删除所有该颜色节点上的 v 候选。
+    返回首个能删除候选的发现（文本说明 + elim 列表）。
+    """
+    for v in range(1, 10):
+        graph = _build_strong_link_graph(board, cand, v)
+        if not graph:
+            continue
+        comps = _color_components(graph)
+        for comp_nodes, color_map, bipartite in comps:
+            # 检查每种颜色是否在 comp 内出现了可见冲突（同色两点在同一单位）
+            for color_val in (0, 1):
+                same_color_nodes = [n for n, col in color_map.items() if col == color_val]
+                # 若该颜色节点少于2个则无法形成冲突
+                if len(same_color_nodes) < 2:
+                    continue
+                conflict_found = False
+                # 检查任意两点是否可见（同行/同列/同宫）
+                for i in range(len(same_color_nodes)):
+                    for j in range(i + 1, len(same_color_nodes)):
+                        if _same_unit(same_color_nodes[i], same_color_nodes[j]):
+                            conflict_found = True
+                            break
+                    if conflict_found:
+                        break
+                if conflict_found:
+                    # 将该颜色上的所有节点删除候选 v
+                    elim_targets = []
+                    for (r, c) in same_color_nodes:
+                        # 确保当前仍存在该候选
+                        if board[r][c] == 0 and v in cand[r][c]:
+                            elim_targets.append((r, c, {v}))
+                    if elim_targets:
+                        comp_repr = ", ".join(rc(r, c) for (r, c) in sorted(comp_nodes))
+                        color_nodes_repr = ", ".join(rc(r, c) for (r, c) in sorted(same_color_nodes))
+                        text = (f"[Color Trap] 数字 {v} 在二色链的一个连通分量（格：{comp_repr}）中，"
+                                f"发现同色格 {color_nodes_repr} 互相可见，说明该色导致矛盾，"
+                                f"因此这些格不能为 {v}。")
+                        return text, (), ("elim",), tuple(f"{r},{c},{v}" for (r, c, _) in elim_targets)
+    return None
+
+def find_color_wrap(board: Grid, cand: List[List[Set[int]]]) -> Optional[
+    Tuple[str, Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]]]:
+    """
+    Color Wrap（二色包裹 / 两色可见消除）:
+      - 对每个数字 v 建立强链图并染色。
+      - 若某个（未染色或已染色）格子能同时“看见”至少一个颜色0的节点和至少一个颜色1的节点，
+        则该格子不可能是 v，因它会在两种颜色真假链中都被否定 — 可以删去该格的 v 候选。
+    返回首个能删除候选的发现（文本说明 + elim 列表）。
+    """
+    for v in range(1, 10):
+        graph = _build_strong_link_graph(board, cand, v)
+        if not graph:
+            continue
+        comps = _color_components(graph)
+        # 汇总整个图中颜色0/1在每个分量中各自的节点集合（我们按分量分别考虑）
+        for comp_nodes, color_map, bipartite in comps:
+            color0_nodes = [n for n, col in color_map.items() if col == 0]
+            color1_nodes = [n for n, col in color_map.items() if col == 1]
+            if not color0_nodes or not color1_nodes:
+                continue
+            # 对于棋盘上任意含 v 的格子（包括非 comp 内），检查是否同时看到 color0 和 color1
+            elim_targets = []
+            for r in range(9):
+                for c in range(9):
+                    if board[r][c] != 0:
+                        continue
+                    if v not in cand[r][c]:
+                        continue
+                    sees0 = any(_same_unit((r, c), node) for node in color0_nodes)
+                    sees1 = any(_same_unit((r, c), node) for node in color1_nodes)
+                    if sees0 and sees1:
+                        # 该格同时被两色可见，故可删 v
+                        elim_targets.append((r, c, {v}))
+            if elim_targets:
+                comp_repr = ", ".join(rc(r, c) for (r, c) in sorted(comp_nodes))
+                text = (f"[Color Wrap] 数字 {v} 在连通分量（格：{comp_repr}）的两色分别可达某格，"
+                        f"因此能同时看到两色的格不能为 {v}，已删去这些格的候选。")
+                return text, (), ("elim",), tuple(f"{r},{c},{v}" for (r, c, _) in elim_targets)
+    return None
+
+def find_color_wing(board: Grid, cand: List[List[Set[int]]]) -> Optional[
+    Tuple[str, Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]]]:
+    # TODO: Coloring 派生技巧，待实现。
+    return None
+
+
+# ===================== 技巧 16：XY-Wing =====================
+
+# ===================== 技巧 17：XYZ-Wing =====================
+
+
+# ===================== 技巧 18：XY-Chain =====================
+
+# ===================== 技巧 19~21：Finned X-Wing/Swordfish/Jellyfish =====================
+
+# ===================== 技巧 22：Empty Rectangle =====================
+
+# ===================== 技巧 23：Aligned Pair Exclusion =====================
+
+# ===================== 技巧 24：Almost Locked Set =====================
+
+# ===================== 技巧 25：Unique Rectangle =====================
+
+
 
 # ===================== 主交互循环 =====================
 
@@ -289,11 +595,20 @@ def main():
                 or find_hidden_pair(board, cand)
                 or find_hidden_triple(board, cand)
                 or find_hidden_quad(board, cand)
+                or find_naked_pair(board, cand)
+                or find_naked_triple(board, cand)
+                or find_naked_quad(board, cand)
+                or find_x_wing(board, cand)
+                # or find_swordfish(board, cand)
+                # or find_jellyfish(board, cand)
+                # or find_color_trap(board, cand)
+                # or find_color_wrap(board, cand)
+                # TODO: or find_color_wing(board, cand)
         )
 
         if hint is None:
             print("提示：没有更多可用的人类逻辑（或需要更高级技巧）。")
-            cmd = input("请输入命令 [r=重新输入, e=退出, 其它=继续查看]: ").strip().lower()
+            cmd = input("请输入命令 [r=重新输入, e=退出, others=继续查看]: ").strip().lower()
             if cmd == 'r':
                 try:
                     board = read_board()
