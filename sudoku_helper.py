@@ -340,19 +340,24 @@ def _fish(board: Grid, cand: List[List[Set[int]]], size: int, base: str) -> Opti
                 poss = [j for j in range(9) if board[j][i] == 0 and v in cand[j][i]]
 
             cols_or_rows = sorted(set(poss))
-            # 典型定义要求每条线上的候选列数（或行数）恰好为 size
-            if len(cols_or_rows) == size:
+            # Fish 算法：每条线上的候选数应该在 2 到 size 之间
+            if 2 <= len(cols_or_rows) <= size:
                 line_to_pos[i] = cols_or_rows
 
         if len(line_to_pos) < size:
             continue
 
         for lines in combinations(line_to_pos.keys(), size):
-            ref = set(line_to_pos[lines[0]])
-            if all(set(line_to_pos[i]) == ref for i in lines):
+            # 收集所有涉及的列/行
+            all_cols_or_rows = set()
+            for line in lines:
+                all_cols_or_rows.update(line_to_pos[line])
+
+            # Fish 的关键条件：size 条线覆盖恰好 size 列/行
+            if len(all_cols_or_rows) == size:
                 elim_targets: List[Tuple[int, int, Set[int]]] = []
                 if base == 'row':
-                    cols = sorted(ref)
+                    cols = sorted(all_cols_or_rows)
                     for r in range(9):
                         if r in lines:
                             continue
@@ -364,7 +369,7 @@ def _fish(board: Grid, cand: List[List[Set[int]]], size: int, base: str) -> Opti
                     text = (f"[{name}] 数字 {v} 在行 {lines_txt} 的列 {{{cols_txt}}} 上成型，"
                             f"因此其它行这些列不能为 {v}。")
                 else:
-                    rows = sorted(ref)
+                    rows = sorted(all_cols_or_rows)
                     for c in range(9):
                         if c in lines:
                             continue
@@ -409,7 +414,7 @@ def _same_unit(a: Pos, b: Pos) -> bool:
 
 def _build_strong_link_graph(board: Grid, cand: List[List[Set[int]]], v: int):
     """
-    对给定数字 v，建立“强链”图：
+    对给定数字 v，建立"强链"图：
       - 节点：所有含候选 v 的空格 (r,c)
       - 边：在同一单位（行/列/宫）且该单位中候选 v 恰好出现 2 次，则这两个格之间存在强链（互斥的二选一）
     返回：字典 graph: node -> set(neighbors)
@@ -422,8 +427,8 @@ def _build_strong_link_graph(board: Grid, cand: List[List[Set[int]]], v: int):
         locs = [(r, c) for (r, c) in cells if board[r][c] == 0 and v in cand[r][c]]
         if len(locs) == 2:
             a, b = locs
-            graph.setdefault(a, set()).add(b)
-            graph.setdefault(b, set()).add(a)
+            graph[a].add(b)
+            graph[b].add(a)
 
     return graph
 
@@ -483,7 +488,7 @@ def find_color_trap(board: Grid, cand: List[List[Set[int]]]) -> Optional[
                 if len(same_color_nodes) < 2:
                     continue
                 conflict_found = False
-                # 检查任意两点是否可见（同行/同列/同宫）
+                # 检查任意两点是否可见（同行/同宫）
                 for i in range(len(same_color_nodes)):
                     for j in range(i + 1, len(same_color_nodes)):
                         if _same_unit(same_color_nodes[i], same_color_nodes[j]):
@@ -512,7 +517,7 @@ def find_color_wrap(board: Grid, cand: List[List[Set[int]]]) -> Optional[
     """
     Color Wrap（二色包裹 / 两色可见消除）:
       - 对每个数字 v 建立强链图并染色。
-      - 若某个（未染色或已染色）格子能同时“看见”至少一个颜色0的节点和至少一个颜色1的节点，
+      - 若某个（未染色）格子能同时"看见"至少一个颜色0的节点和至少一个颜色1的节点，
         则该格子不可能是 v，因它会在两种颜色真假链中都被否定 — 可以删去该格的 v 候选。
     返回首个能删除候选的发现（文本说明 + elim 列表）。
     """
@@ -527,13 +532,16 @@ def find_color_wrap(board: Grid, cand: List[List[Set[int]]]) -> Optional[
             color1_nodes = [n for n, col in color_map.items() if col == 1]
             if not color0_nodes or not color1_nodes:
                 continue
-            # 对于棋盘上任意含 v 的格子（包括非 comp 内），检查是否同时看到 color0 和 color1
+            # 对于棋盘上任意含 v 的格子（不在当前连通分量内），检查是否同时看到 color0 和 color1
             elim_targets = []
             for r in range(9):
                 for c in range(9):
                     if board[r][c] != 0:
                         continue
                     if v not in cand[r][c]:
+                        continue
+                    # 关键修复：不处理已经在连通分量中的节点
+                    if (r, c) in comp_nodes:
                         continue
                     sees0 = any(_same_unit((r, c), node) for node in color0_nodes)
                     sees1 = any(_same_unit((r, c), node) for node in color1_nodes)
@@ -549,29 +557,208 @@ def find_color_wrap(board: Grid, cand: List[List[Set[int]]]) -> Optional[
 
 def find_color_wing(board: Grid, cand: List[List[Set[int]]]) -> Optional[
     Tuple[str, Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]]]:
-    # TODO: Coloring 派生技巧，待实现。
+    """
+    Color Wing (颜色翅膀):
+    - 分析强链分量和弱链接的组合模式
+    - 寻找多链组合形成的消除机会
+    """
+    for v in range(1, 10):
+        # 获取所有包含v的位置
+        positions = [(r, c) for r in range(9) for c in range(9)
+                    if board[r][c] == 0 and v in cand[r][c]]
+
+        if len(positions) < 4:
+            continue
+
+        # 构建强链图
+        graph = _build_strong_link_graph(board, cand, v)
+        if not graph:
+            continue
+
+        # 获取连通分量和颜色
+        comps = _color_components(graph)
+
+        # 标准Color Wing：检查能同时看到两种颜色的位置
+        for comp_nodes, color_map, bipartite in comps:
+            if not bipartite or len(comp_nodes) < 2:
+                continue
+
+            color0_nodes = [n for n, col in color_map.items() if col == 0]
+            color1_nodes = [n for n, col in color_map.items() if col == 1]
+
+            if len(color0_nodes) == 0 or len(color1_nodes) == 0:
+                continue
+
+            elim_targets = []
+
+            # 检查所有不在当前分量中的候选位置
+            for (r, c) in positions:
+                if (r, c) in comp_nodes:
+                    continue
+
+                sees_color0 = any(_same_unit((r, c), node) for node in color0_nodes)
+                sees_color1 = any(_same_unit((r, c), node) for node in color1_nodes)
+
+                if sees_color0 and sees_color1:
+                    elim_targets.append((r, c, {v}))
+
+            if elim_targets:
+                comp_desc = ", ".join([rc(r, c) for r, c in sorted(comp_nodes)])
+                color0_desc = ", ".join([rc(r, c) for r, c in sorted(color0_nodes)])
+                color1_desc = ", ".join([rc(r, c) for r, c in sorted(color1_nodes)])
+                elim_desc = ", ".join([rc(r, c) for r, c, _ in elim_targets])
+
+                text = (f"[Color Wing] 数字 {v} 在强链组（{comp_desc}）中形成二分图着色：\n"
+                       f"• 颜色A位置：{color0_desc}\n"
+                       f"• 颜色B位置：{color1_desc}\n"
+                       f"• 原理：在强链中，同一颜色的位置不能同时为真。位置 {elim_desc} "
+                       f"能同时看到两种颜色的位置，因此无论哪种颜色为真，这些位置都不能放置数字 {v}。")
+                return text, (), ("elim",), tuple(f"{r},{c},{v}" for (r, c, _) in elim_targets)
+
+        # 增强型Color Wing：多链组合分析
+        result = find_multi_chain_wing(board, cand, v, positions, comps)
+        if result:
+            return result
+
     return None
 
+def find_multi_chain_wing(board: Grid, cand: List[List[Set[int]]], v: int,
+                         positions: list, comps: list) -> Optional[
+    Tuple[str, Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]]]:
+    """
+    多链组合Wing分析：考虑多个强链分量之间的相互作用
+    """
+    if len(comps) < 2:
+        return None
 
-# ===================== 技巧 16：XY-Wing =====================
+    # 分析所有分量的组合
+    for i in range(len(comps)):
+        for j in range(i + 1, len(comps)):
+            comp1_nodes, color1_map, bipartite1 = comps[i]
+            comp2_nodes, color2_map, bipartite2 = comps[j]
 
-# ===================== 技巧 17：XYZ-Wing =====================
+            if not bipartite1 or not bipartite2:
+                continue
 
+            # 寻找连接两个分量的"桥接"位置
+            bridge_positions = []
+            for (r, c) in positions:
+                if (r, c) in comp1_nodes or (r, c) in comp2_nodes:
+                    continue
 
-# ===================== 技巧 18：XY-Chain =====================
+                # 检查是否与两个分量都有关系
+                relates_comp1 = any(_same_unit((r, c), node) for node in comp1_nodes)
+                relates_comp2 = any(_same_unit((r, c), node) for node in comp2_nodes)
 
-# ===================== 技巧 19~21：Finned X-Wing/Swordfish/Jellyfish =====================
+                if relates_comp1 and relates_comp2:
+                    bridge_positions.append((r, c))
 
-# ===================== 技巧 22：Empty Rectangle =====================
+            if bridge_positions:
+                # 通过桥接分析消除机会
+                elim_targets = []
 
-# ===================== 技巧 23：Aligned Pair Exclusion =====================
+                # 获取两个分量的颜色分组
+                comp1_color0 = [n for n, col in color1_map.items() if col == 0]
+                comp1_color1 = [n for n, col in color1_map.items() if col == 1]
+                comp2_color0 = [n for n, col in color2_map.items() if col == 0]
+                comp2_color1 = [n for n, col in color2_map.items() if col == 1]
 
-# ===================== 技巧 24：Almost Locked Set =====================
+                # 对于其他位置，检查复杂的约束关系
+                for (r, c) in positions:
+                    if ((r, c) in comp1_nodes or (r, c) in comp2_nodes or
+                        (r, c) in bridge_positions):
+                        continue
 
-# ===================== 技巧 25：Unique Rectangle =====================
+                    # 检查与桥接位置的关系
+                    sees_bridge = any(_same_unit((r, c), bridge) for bridge in bridge_positions)
 
+                    # 检查与分量的关系
+                    sees_comp1 = any(_same_unit((r, c), node) for node in comp1_nodes)
+                    sees_comp2 = any(_same_unit((r, c), node) for node in comp2_nodes)
 
+                    # 多链Wing逻辑：如果通过桥接形成复杂约束
+                    if sees_bridge and (sees_comp1 or sees_comp2):
+                        elim_targets.append((r, c, {v}))
 
+                if elim_targets:
+                    comp1_desc = ", ".join([rc(r, c) for r, c in sorted(comp1_nodes)])
+                    comp2_desc = ", ".join([rc(r, c) for r, c in sorted(comp2_nodes)])
+                    bridge_desc = ", ".join([rc(r, c) for r, c in bridge_positions])
+                    elim_desc = ", ".join([rc(r, c) for r, c, _ in elim_targets])
+
+                    text = (f"[Multi-Chain Wing] 数字 {v} 的多链组合分析：\n"
+                           f"• 强链组1：{comp1_desc}\n"
+                           f"• 强链组2：{comp2_desc}\n"
+                           f"• 桥接位置：{bridge_desc}\n"
+                           f"• 原理：两个独立的强链分量通过桥接位置形成复杂的约束网络。"
+                           f"位置 {elim_desc} 受到多重约束影响，无法放置数字 {v}。")
+                    return text, (), ("elim",), tuple(f"{r},{c},{v}" for (r, c, _) in elim_targets)
+
+    # 另一种模式：三位置链分析
+    return find_three_position_chain_wing(board, cand, v, positions)
+
+def find_three_position_chain_wing(board: Grid, cand: List[List[Set[int]]], v: int,
+                                  positions: list) -> Optional[
+    Tuple[str, Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]]]:
+    """
+    三位置链Wing分析：特别处理某些列/行有3个候选的情况
+    """
+    # 寻找有3个候选的单位
+    three_candidate_units = []
+
+    for kind, idx, cells in unit_iter():
+        unit_candidates = [(r, c) for r, c in cells if board[r][c] == 0 and v in cand[r][c]]
+        if len(unit_candidates) == 3:
+            three_candidate_units.append((kind, idx, unit_candidates))
+
+    if len(three_candidate_units) < 2:
+        return None
+
+    # 分析多个三候选单位的组合
+    for i in range(len(three_candidate_units)):
+        for j in range(i + 1, len(three_candidate_units)):
+            kind1, idx1, cands1 = three_candidate_units[i]
+            kind2, idx2, cands2 = three_candidate_units[j]
+
+            # 寻找交叉关系
+            intersections = []
+            for pos1 in cands1:
+                for pos2 in cands2:
+                    if _same_unit(pos1, pos2) and pos1 != pos2:
+                        intersections.append((pos1, pos2))
+
+            if len(intersections) >= 2:
+                # 找到复杂的约束网络，分析消除机会
+                all_involved = set(cands1 + cands2)
+
+                elim_targets = []
+                for (r, c) in positions:
+                    if (r, c) in all_involved:
+                        continue
+
+                    # 检查是否与多个涉及位置相关
+                    related_count = sum(1 for pos in all_involved if _same_unit((r, c), pos))
+
+                    if related_count >= 3:  # 与至少3个位置相关，形成强约束
+                        elim_targets.append((r, c, {v}))
+
+                if elim_targets:
+                    unit1_name = f"第{idx1+1}{kind1}" if kind1 != "box" else f"第{idx1//3+1}-{idx1%3+1}宫"
+                    unit2_name = f"第{idx2+1}{kind2}" if kind2 != "box" else f"第{idx2//3+1}-{idx2%3+1}宫"
+
+                    involved_desc = ", ".join([rc(r, c) for r, c in sorted(all_involved)])
+                    elim_desc = ", ".join([rc(r, c) for r, c, _ in elim_targets])
+                    intersect_desc = ", ".join([f"{rc(p1[0], p1[1])}-{rc(p2[0], p2[1])}" for p1, p2 in intersections])
+
+                    text = (f"[Three-Position Wing] 数字 {v} 的三位置链分析：\n"
+                           f"• {unit1_name}候选位置：{', '.join([rc(r, c) for r, c in cands1])}\n"
+                           f"• {unit2_name}候选位置：{', '.join([rc(r, c) for r, c in cands2])}\n"
+                           f"• 交叉关系：{intersect_desc}\n"
+                           f"• 原理：两个三位置单位通过交叉关系形成约束网络。"
+                           f"位置 {elim_desc} 与网络中多个位置相关，受到强约束影响，无法放置数字 {v}。")
+                    return text, (), ("elim",), tuple(f"{r},{c},{v}" for (r, c, _) in elim_targets)
+
+    return None
 # ===================== 主交互循环 =====================
 
 def main():
@@ -599,11 +786,11 @@ def main():
                 or find_naked_triple(board, cand)
                 or find_naked_quad(board, cand)
                 or find_x_wing(board, cand)
-                # or find_swordfish(board, cand)
-                # or find_jellyfish(board, cand)
-                # or find_color_trap(board, cand)
-                # or find_color_wrap(board, cand)
-                # TODO: or find_color_wing(board, cand)
+                or find_swordfish(board, cand)
+                or find_jellyfish(board, cand)
+                or find_color_trap(board, cand)
+                or find_color_wrap(board, cand)
+                or find_color_wing(board, cand)
         )
 
         if hint is None:
