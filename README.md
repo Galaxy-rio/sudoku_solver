@@ -11,8 +11,6 @@ A step by step sudoku solver.
 - Hidden Pair
 - Hidden Triple
 - Hidden Quad
-
-### Future Techniques
 - Naked Pair
 - Naked Triple
 - Naked Quad
@@ -22,6 +20,8 @@ A step by step sudoku solver.
 - Color Trap
 - Color Wrap
 - Color Wing
+
+### Future Techniques
 - XY-Wing
 - XYZ-Wing
 - XY-Chain
