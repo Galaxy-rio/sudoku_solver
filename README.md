@@ -2,7 +2,7 @@
 
 A lightweight Python tool to assist in solving Sudoku puzzles.  
 This project provides common Sudoku solving strategies and utilities for both beginners and advanced players.
----
+
 ## Features
 - Supports **standard 9x9 Sudoku** puzzles.
 - Implements multiple solving techniques:
@@ -35,7 +35,7 @@ This project provides common Sudoku solving strategies and utilities for both be
 - Aligned Pair Exclusion
 - Almost Locked Set
 - Unique Rectangle
----
+
 
 ## Installation
 
@@ -44,7 +44,7 @@ Clone the repository:
 git clone https://github.com/Galaxy-rio/sudoku_solver.git
 cd sudoku-helper
 ```
----
+
 
 ## Usage
 
@@ -101,7 +101,6 @@ output:
 提示： [Locked Candidate] 数字 2 在宫 1-1 只位于行 3，故该行宫外位置不可为 2。
 请输入命令 [n=执行提示, r=重新输入, e=退出]:
 ```
----
 
 ## Roadmap
 
