@@ -42,9 +42,7 @@ This project provides common Sudoku solving strategies and utilities for both be
 Clone the repository:
 ```bash
 git clone https://github.com/Galaxy-rio/sudoku_solver.git
-cd sudoku-helper
 ```
-
 
 ## Usage
 
