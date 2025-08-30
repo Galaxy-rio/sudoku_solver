@@ -4,7 +4,7 @@ A lightweight Python tool to assist in solving Sudoku puzzles.
 This project provides common Sudoku solving strategies and utilities for both beginners and advanced players.
 
 ## Features
-- Supports **standard 9x9 Sudoku** puzzles.
+- Supports standard 9x9 Sudoku puzzles.
 - Implements multiple solving techniques.
 - Step-by-step solving process with explanations.
 
